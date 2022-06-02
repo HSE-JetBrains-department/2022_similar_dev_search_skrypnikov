@@ -15,12 +15,15 @@ from unidiff import PatchSet, UnidiffParseError
 
 from shared import flush_progress_bar, progress, finish_progress, group, s_get_content, s_get_lines, unwrap_bytes_gen_to_str
 
+import multiprocessing
+
 @dataclass(init=True)
 class ParsedCommitInfo:
 
     # Only single parent is allowed
     parent_sha: str
-    patch_set: List[str]
+    patch_set: Dict[str, str]
+    langs: Dict[str, str]
 
 
 @dataclass
@@ -47,11 +50,11 @@ class ParsedRepo:
         self.commits_by_author[key] = value
 
 
-def patch_set_to_json(patchSet):
+def patch_set_to_json(repopath, patchSet):
     dict_obj = {}
     for patched_file in patchSet:
         changes_list = []
-        dict_obj[patched_file.path] = changes_list
+        dict_obj[path.join(repopath, patched_file.path)] = changes_list
         for hunk in patched_file:
             changes_list.extend(map(str, hunk.target_lines()))
     
@@ -64,7 +67,8 @@ def repo_part_to_json(obj):
     if isinstance(obj, ParsedCommitInfo):
         return {
             'parent_sha': obj.parent_sha, 
-            'patch_set': obj.patch_set
+            'patch_set': obj.patch_set,
+            'langs': obj.langs 
         }
     if isinstance(obj, ParsedCommits):
         return {k if isinstance(k, str) else k.decode(): v for k, v in obj.commit_data_by_sha.items()}
@@ -84,7 +88,26 @@ def _map_chunk_to_repo_part(chunk):
     return parsed_repo
 
 def _parse_repo_commits_chunked(repo_path, quiet, chunk_size):
-    return map(group(repo.object_store, chunk_size))
+    print('Starting parallel map...')
+    repo = Repo(repo_path)
+    with multiprocessing.Pool(5) as p:
+        return p.map(_parse_commit_chunk, [(i, repo_path, enry_dict, list(chunk)) for i, chunk in enumerate(group(repo.object_store, chunk_size))])
+
+def _parse_commit_chunk(chunk_tuple): # chunk is an iterable of whatever the repo.object store yields as an iterable
+    i, repo_path, enry_dict, chunk = chunk_tuple
+    print(f'Chunk {i} started...')
+    
+    repo = Repo(repo_path)
+    parsed_repo = ParsedRepo({})
+
+    curr_item = 0
+    for sha in chunk:
+        curr_item += 1
+        if isinstance(repo[sha], Commit):
+            if not _try_do_parse_commit(repo, repo[sha], parsed_repo, enry_dict, quiet=True, curr_item=curr_item, chunk_n=i): continue
+    
+    return parsed_repo
+
 
 def _parse_repo_commits_unchunked(repo_path: str, enry_dict: dict, quiet: bool):
     # List all commits in object_store
@@ -104,7 +127,7 @@ def _parse_repo_commits_unchunked(repo_path: str, enry_dict: dict, quiet: bool):
     finish_progress()
     return parsed_repo
 
-def _try_do_parse_commit(repo, commit, parsed_repo, enry_dict, *, quiet, curr_item):
+def _try_do_parse_commit(repo, commit, parsed_repo, enry_dict, *, quiet, curr_item, chunk_n=0):
     if len(commit.parents) != 1:
         # Do not parse merge commits, those contain barely any relevant info
         return False
@@ -147,23 +170,35 @@ def _try_do_parse_commit(repo, commit, parsed_repo, enry_dict, *, quiet, curr_it
         parsed_commits = parsed_repo[commit.author] = ParsedCommits({})
 
     try:
-        patch_languages_and_files = {}
+        patch_languages = {}
+        patch_set_dict  = {}
 
-        for f in PatchSet(diff_str):
-            file_path = path.join(repo.path, f.path)
+        # Splice out the parsed files
+        patch_files = patch_set_to_json(repo.path, PatchSet(diff_str))
+
+        for f in patch_files:
+            file_path = path.join(repo.path, f)
             if file_path in enry_dict:
-                patch_languages_and_files[file_path] = enry_dict[file_path]
+                patch_languages[file_path] = enry_dict[file_path]
+                try:
+                    patch_set_dict[file_path] = patch_files[file_path]
+                except KeyError as e:
+                    print(patch_files)
+                    raise e
 
-        if patch_languages_and_files:
+
+        if patch_languages and patch_set_dict:
             parsed_commits[commit.sha().hexdigest()] = ParsedCommitInfo(
                 parent.sha().hexdigest(),
-                patch_languages_and_files
+                patch_set_dict,
+                patch_languages
             )
+
     except UnidiffParseError as e:
-        with open(f'out/error{curr_item}.log', 'w') as f:
+        with open(f'out/error{chunk_n}:{curr_item}.log', 'w') as f:
             f.write(diff_str)
-        sys.stderr.write(f'\n!!! ERROR !!!: Invalid (?) unidiff at item {curr_item}, hex: {commit.sha().hexdigest()}\n')
-        sys.stderr.write(f'\nText:\n\t{e}\nSee error{curr_item}.log for details...\n')
+        sys.stderr.write(f'\n!!! ERROR !!!: Invalid (?) unidiff at item {chunk_n}:{curr_item}, hex: {commit.sha().hexdigest()}\n')
+        sys.stderr.write(f'\nText:\n\t{e}\nSee error{chunk_n}:{curr_item}.log for details...\n')
 
     if not quiet:
         progress(commit.sha().hexdigest(), curr_item, 'unk')
@@ -212,6 +247,7 @@ if __name__ == '__main__':
     parser.add_argument('--force-reclone', action='store_true')
     parser.add_argument('--clean', '-c', action='store_true')
     parser.add_argument('--quiet', '-q', action='store_true')
+    parser.add_argument('--chunked', '-ch', action='store_true')
     args = parser.parse_args()
 
     repo_path = args.repo[0]
@@ -236,9 +272,10 @@ if __name__ == '__main__':
 
     print('Doing the enry part...')
     enry_dict = run_enry_by_file(CWD, repo_path)
+    print('enry part DONE')
 
     print('Parsing the repo...')
-    r = parse_repo_commits(repo_path, enry_dict, args.quiet)
+    r = parse_repo_commits(repo_path, enry_dict, args.quiet, chunked=args.chunked, chunk_size=50000)
 
     with open(f'out/enry_{path.basename(path.normpath(repo_path))}.json', 'w') as json_out:
         json.dump(enry_dict, json_out, default=repo_part_to_json)
