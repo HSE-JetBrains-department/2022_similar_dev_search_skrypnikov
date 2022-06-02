@@ -17,6 +17,9 @@ from shared import flush_progress_bar, progress, finish_progress, group, s_get_c
 
 import multiprocessing
 
+from treesitter_stage import load_treesitter
+from tree_sitter import Language, Parser
+
 @dataclass(init=True)
 class ParsedCommitInfo:
 
@@ -24,6 +27,7 @@ class ParsedCommitInfo:
     parent_sha: str
     patch_set: Dict[str, str]
     langs: Dict[str, str]
+    ids: Dict[str, str]
 
 
 @dataclass
@@ -49,6 +53,8 @@ class ParsedRepo:
     def __setitem__(self, key: str, value: ParsedCommits):
         self.commits_by_author[key] = value
 
+def cleanup_diff(diff):
+    return '\n'.join(map(lambda s: s[1:] if s[0] == '+' else s, diff))
 
 def patch_set_to_json(repopath, patchSet):
     dict_obj = {}
@@ -68,7 +74,8 @@ def repo_part_to_json(obj):
         return {
             'parent_sha': obj.parent_sha, 
             'patch_set': obj.patch_set,
-            'langs': obj.langs 
+            'langs': obj.langs,
+            'ids': obj.ids
         }
     if isinstance(obj, ParsedCommits):
         return {k if isinstance(k, str) else k.decode(): v for k, v in obj.commit_data_by_sha.items()}
@@ -77,17 +84,7 @@ def repo_part_to_json(obj):
   
     return obj
 
-def _map_chunk_to_repo_part(chunk):
-    repo = Repo(repo_path)
-    parsed_repo = ParsedRepo({})
-
-    for sha in chunk:
-        if isinstance(repo[sha], Commit):
-            if not _try_do_parse_commit(repo, repo[sha], parsed_repo, quiet=True): continue
-    
-    return parsed_repo
-
-def _parse_repo_commits_chunked(repo_path, quiet, chunk_size):
+def _parse_repo_commits_chunked(repo_path, enry_dict, quiet, chunk_size):
     print('Starting parallel map...')
     repo = Repo(repo_path)
     with multiprocessing.Pool(5) as p:
@@ -100,16 +97,20 @@ def _parse_commit_chunk(chunk_tuple): # chunk is an iterable of whatever the rep
     repo = Repo(repo_path)
     parsed_repo = ParsedRepo({})
 
+    parser = Parser()
+    LANG_LIST = ['python']
+    lang_objs = load_treesitter(LANG_LIST)
+
     curr_item = 0
     for sha in chunk:
         curr_item += 1
         if isinstance(repo[sha], Commit):
-            if not _try_do_parse_commit(repo, repo[sha], parsed_repo, enry_dict, quiet=True, curr_item=curr_item, chunk_n=i): continue
+            if not _try_do_parse_commit(repo, repo[sha], parsed_repo, enry_dict, lang_objs, parser, quiet=True, curr_item=curr_item, chunk_n=i): continue
     
     return parsed_repo
 
 
-def _parse_repo_commits_unchunked(repo_path: str, enry_dict: dict, quiet: bool):
+def _parse_repo_commits_unchunked(repo_path: str, enry_dict: Dict[str, str], lang_objs: Dict[str, Language], quiet: bool):
     # List all commits in object_store
     # If a commit has a single parent:
     #  Get a diff with the parent
@@ -127,7 +128,7 @@ def _parse_repo_commits_unchunked(repo_path: str, enry_dict: dict, quiet: bool):
     finish_progress()
     return parsed_repo
 
-def _try_do_parse_commit(repo, commit, parsed_repo, enry_dict, *, quiet, curr_item, chunk_n=0):
+def _try_do_parse_commit(repo, commit, parsed_repo, enry_dict, lang_objs, parser, *, quiet, curr_item, chunk_n=0):
     if len(commit.parents) != 1:
         # Do not parse merge commits, those contain barely any relevant info
         return False
@@ -172,6 +173,7 @@ def _try_do_parse_commit(repo, commit, parsed_repo, enry_dict, *, quiet, curr_it
     try:
         patch_languages = {}
         patch_set_dict  = {}
+        patch_ids_dict  = {}
 
         # Splice out the parsed files
         patch_files = patch_set_to_json(repo.path, PatchSet(diff_str))
@@ -179,19 +181,27 @@ def _try_do_parse_commit(repo, commit, parsed_repo, enry_dict, *, quiet, curr_it
         for f in patch_files:
             file_path = path.join(repo.path, f)
             if file_path in enry_dict:
-                patch_languages[file_path] = enry_dict[file_path]
-                try:
-                    patch_set_dict[file_path] = patch_files[file_path]
-                except KeyError as e:
-                    print(patch_files)
-                    raise e
+                languages = enry_dict[file_path]
+                if (ll := languages[0].lower()) in lang_objs:
+                    patch_text = patch_files[file_path]
 
+                    parser.set_language(lang_objs[ll])
+                    treesitter_query = lang_objs[ll].query('((identifier) @id)')
+                    patch_string = cleanup_diff(patch_text)
 
-        if patch_languages and patch_set_dict:
+                    src_bytes = bytes(patch_string, 'utf8')
+                    captures = treesitter_query.captures(parser.parse(src_bytes).root_node)
+                    if captures:
+                        patch_set_dict[file_path] = patch_string
+                        patch_languages[file_path] = ll
+                        patch_ids_dict[file_path] = list(map(lambda capture: src_bytes[capture[0].start_byte:capture[0].end_byte].decode('utf8'), captures))
+
+        if patch_languages and patch_set_dict and patch_ids_dict:
             parsed_commits[commit.sha().hexdigest()] = ParsedCommitInfo(
                 parent.sha().hexdigest(),
                 patch_set_dict,
-                patch_languages
+                patch_languages,
+                patch_ids_dict
             )
 
     except UnidiffParseError as e:
@@ -212,7 +222,7 @@ def parse_repo_commits(repo_path: str, enry_dict: dict, quiet: bool, chunked: bo
     if not chunked:
         return _parse_repo_commits_unchunked(repo_path, enry_dict, quiet)
     else:
-        return _parse_repo_commits_chunked(repo_path, quiet, chunk_size)
+        return _parse_repo_commits_chunked(repo_path, enry_dict, quiet, chunk_size)
 
 def clone_and_detect_path(repo_path, force_reclone):
 
@@ -263,7 +273,6 @@ if __name__ == '__main__':
 
     repo_path = path.join(CWD, repo_path)
 
-    # TODO extract the variable/function names with treesitter (or other parser software)
     # TODO discover more repos and put them into parsing with separate instances of this script 
     # TODO refactor into neat stages?
 
