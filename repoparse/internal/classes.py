@@ -1,4 +1,5 @@
 import sys
+from multiprocessing import Process
 from dataclasses import dataclass
 from os import path
 from typing import Dict, List, Union
@@ -7,7 +8,7 @@ from dulwich.patch import patch_filename, is_binary, gen_diff_header, unified_di
 from tree_sitter import Language, Parser
 from unidiff import PatchSet, UnidiffParseError
 
-from repoparse.internal.utils import get_content, get_lines, \
+from internal.utils import get_content, get_lines, \
     unwrap_bytes_gen_to_str, cleanup_diff
 
 
@@ -75,6 +76,17 @@ class ParsedRepo:
         return {k: v for k, v in self.commits_by_author.items()}
 
 
+def patch_set_insertions_to_dict(repo_path: str, patch_set: PatchSet) -> Dict[str, List[str]]:
+    dict_obj = {}
+    for patched_file in patch_set:
+        changes_list = []
+        dict_obj[path.join(repo_path, patched_file.path)] = changes_list
+        for hunk in patched_file:
+            changes_list.extend(map(str, hunk.target_lines()))
+
+    return dict_obj
+
+
 @dataclass(init=True)
 class RepoParseContext:
     enry_on_latest_revision: Dict[str, List[str]]
@@ -121,13 +133,18 @@ class RepoParseContext:
                 except UnicodeDecodeError:
                     continue
 
-        parsed_commits = self.parsed_repo[commit.author]
+        parsed_commits = self.parsed_repo[commit.author.decode()]
         if parsed_commits is None:
-            parsed_commits = self.parsed_repo[commit.author] = ParsedCommits({})
+            parsed_commits = self.parsed_repo[commit.author.decode()] = ParsedCommits({})
 
         commit_parse_result = self._extract_commit_info(repo.path, diff_str)
         if not commit_parse_result.is_ok:
             return
+
+        # Some repos are truly humongous
+        # and CPython can't effectively reclaim memory while processing them
+        # So, here comes the del!
+        del diff_str
 
         parsed_commits[commit.sha().hexdigest()] = ParsedCommitInfo(
             parent.sha().hexdigest(),
@@ -175,3 +192,6 @@ class RepoParseContext:
                 f.write(diff_str)
             sys.stderr.write(f"\n!!! ERROR !!!: Invalid (?) unidiff at item {parser_position}\n")
             sys.stderr.write(f"\nText:\n\t{e}\nSee {err_log_name} for details...\n")
+
+            return CommitParseResult({}, {}, {})  # not is_ok
+
