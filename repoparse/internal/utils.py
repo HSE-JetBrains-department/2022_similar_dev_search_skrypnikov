@@ -1,9 +1,9 @@
-from itertools import islice, chain
-from os import walk, path, makedirs, system
+from itertools import chain, islice
+from os import makedirs, path, system, walk
 from sys import stderr
-from typing import List, Iterable, TypeVar, Dict
+from typing import Dict, Iterable, List, TypeVar
 
-from dulwich.objects import S_ISGITLINK, Blob
+from dulwich.objects import Blob, S_ISGITLINK
 from enry import get_languages
 from tree_sitter import Language
 

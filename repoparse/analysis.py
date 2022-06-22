@@ -1,11 +1,10 @@
 from collections import Counter, defaultdict
 import json
-from os import path
-from os import walk
-from typing import Dict, TypeVar, Tuple
+from os import path, walk
+from typing import Dict, Tuple, TypeVar
 
 import numpy as np
-from scipy.sparse import dok_matrix, csr_matrix
+from scipy.sparse import csr_matrix, dok_matrix
 from sklearn.neighbors import KDTree as skKdTree
 
 from repoparse import GLOBAL_LANGUAGES

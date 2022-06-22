@@ -3,9 +3,8 @@ from os import path
 import sys
 from typing import Dict, List, Union
 
-from dulwich.patch import patch_filename, is_binary, gen_diff_header, unified_diff
-from internal.utils import get_content, get_lines, \
-    unwrap_bytes_gen_to_str, cleanup_diff
+from dulwich.patch import gen_diff_header, is_binary, patch_filename, unified_diff
+from internal.utils import cleanup_diff, get_content, get_lines, unwrap_bytes_gen_to_str
 from tree_sitter import Language, Parser
 from unidiff import PatchSet, UnidiffParseError
 

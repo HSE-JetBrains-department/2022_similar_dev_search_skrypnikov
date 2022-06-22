@@ -1,11 +1,10 @@
 from argparse import ArgumentParser
 import json
 import multiprocessing
-from os import makedirs, system, getcwd, path
+from os import getcwd, makedirs, path, system
 from shutil import rmtree
 import time
-from typing import Dict, List, Tuple
-from typing import Union
+from typing import Dict, List, Tuple, Union
 
 from dulwich.objects import Commit, ShaFile
 from dulwich.repo import Repo
@@ -13,7 +12,7 @@ from github import Github, GithubException
 from tree_sitter import Parser
 
 from internal.classes import ParsedRepo, RepoParseContext
-from internal.utils import group, run_enry_by_file, load_tree_sitter
+from internal.utils import group, load_tree_sitter, run_enry_by_file
 
 GLOBAL_LANGUAGES = ["python", "c", "java", "javascript", "php"]
 
