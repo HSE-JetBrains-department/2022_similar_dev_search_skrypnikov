@@ -99,6 +99,8 @@ class RepoParseContext:
 
     parsed_repo: ParsedRepo
 
+    out_dir_path: str
+
     def parse_commit_with_single_parent(self, repo, commit):
         parent = repo[commit.parents[0]]
 
@@ -188,7 +190,7 @@ class RepoParseContext:
             err_log_name = f"error{repo_name}:{self.chunk_number}:{self.curr_item_number}.log"
             parser_position = f"{self.chunk_number}:{self.curr_item_number}"
 
-            with open(f"out/error{repo_name}:{parser_position}.log", 'w') as f:
+            with open(f"{self.out_dir_path}/error{repo_name}:{parser_position}.log", 'w') as f:
                 f.write(diff_str)
             sys.stderr.write(f"\n!!! ERROR !!!: Invalid (?) unidiff at item {parser_position}\n")
             sys.stderr.write(f"\nText:\n\t{e}\nSee {err_log_name} for details...\n")

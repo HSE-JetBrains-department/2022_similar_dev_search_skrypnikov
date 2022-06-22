@@ -17,18 +17,20 @@ from typing import Union
 global_languages = ["python", "c", "java", "javascript", "php"]
 
 
-def _parse_repo_commits_chunked(repo_path: str, enry_dict: Dict[str, List[str]], chunk_size: int):
+def _parse_repo_commits_chunked(repo_path: str, enry_dict: Dict[str, List[str]], chunk_size: int, out_path: str,
+                                build_path: str):
     print('Starting parallel map...')
     repo = Repo(repo_path)
     with multiprocessing.Pool(12) as p:
         return p.map(
             _parse_commit_chunk,
-            [(i, repo_path, enry_dict, list(chunk)) for i, chunk in enumerate(group(repo.object_store, chunk_size))]
+            [(i, repo_path, enry_dict, list(chunk), out_path, build_path) for i, chunk in
+             enumerate(group(repo.object_store, chunk_size))]
         )
 
 
-def _parse_commit_chunk(chunk_tuple: Tuple[int, str, Dict[str, List[str]], List[ShaFile]]) -> ParsedRepo:
-    chunk_n, repo_path, enry_dict, chunk = chunk_tuple
+def _parse_commit_chunk(chunk_tuple: Tuple[int, str, Dict[str, List[str]], List[ShaFile], str, str]) -> ParsedRepo:
+    chunk_n, repo_path, enry_dict, chunk, out_path, build_path = chunk_tuple
     print(f"Chunk {chunk_n} started...")
 
     # Have to bootstrap i/o objects for each chunk locally,
@@ -36,7 +38,7 @@ def _parse_commit_chunk(chunk_tuple: Tuple[int, str, Dict[str, List[str]], List[
     repo = Repo(repo_path)
     parsed_repo = ParsedRepo({})
     chunk_local_parser = Parser()
-    chunk_local_lang_objs = load_tree_sitter(global_languages, "build/")
+    chunk_local_lang_objs = load_tree_sitter(global_languages, build_path)
 
     ctx = RepoParseContext(
         enry_dict,
@@ -45,7 +47,8 @@ def _parse_commit_chunk(chunk_tuple: Tuple[int, str, Dict[str, List[str]], List[
         chunk_number=chunk_n,
         curr_item_number=0,
         is_quiet=False,
-        parsed_repo=parsed_repo
+        parsed_repo=parsed_repo,
+        out_dir_path=out_path
     )
 
     for sha in chunk:
@@ -57,11 +60,12 @@ def _parse_commit_chunk(chunk_tuple: Tuple[int, str, Dict[str, List[str]], List[
     return ctx.parsed_repo
 
 
-def _parse_repo_commits_not_chunked(repo_path: str, enry_dict: Dict[str, List[str]], quiet: bool) -> ParsedRepo:
+def _parse_repo_commits_not_chunked(repo_path: str, enry_dict: Dict[str, List[str]], quiet: bool, out_path: str,
+                                    build_path: str) -> ParsedRepo:
     repo = Repo(repo_path)
     parsed_repo = ParsedRepo({})
     parser = Parser()
-    lang_objs = load_tree_sitter(global_languages, 'build/')
+    lang_objs = load_tree_sitter(global_languages, build_path)
 
     ctx = RepoParseContext(
         enry_dict,
@@ -70,7 +74,8 @@ def _parse_repo_commits_not_chunked(repo_path: str, enry_dict: Dict[str, List[st
         chunk_number=0,  # The single chunk has id 0
         curr_item_number=0,
         is_quiet=quiet,
-        parsed_repo=parsed_repo
+        parsed_repo=parsed_repo,
+        out_dir_path=out_path
     )
 
     for sha in repo.object_store:
@@ -81,11 +86,12 @@ def _parse_repo_commits_not_chunked(repo_path: str, enry_dict: Dict[str, List[st
     return ctx.parsed_repo
 
 
-def parse_repo_commits(repo_path: str, enry_dict: dict, quiet: bool, chunked: bool = False, chunk_size: int = 10000):
+def parse_repo_commits(repo_path: str, enry_dict: dict, quiet: bool, out_path: str, build_path: str,
+                       chunked: bool = False, chunk_size: int = 10000):
     if not chunked:
-        return _parse_repo_commits_not_chunked(repo_path, enry_dict, quiet)
+        return _parse_repo_commits_not_chunked(repo_path, enry_dict, quiet, out_path, build_path)
     else:
-        return _parse_repo_commits_chunked(repo_path, enry_dict, chunk_size)
+        return _parse_repo_commits_chunked(repo_path, enry_dict, chunk_size, out_path, build_path)
 
 
 def clone_and_detect_path(repo_path: str, force_reclone: bool, build_dir_path: str) -> str:
@@ -121,6 +127,56 @@ def get_github_repo_id(repo_path: str) -> Union[str, None]:
     return None
 
 
+def calculate_stars(repo_path: str, git_key_path: str, parse_depth: int, max_stargazers: int,
+                    max_stargazers_starred: int, next_stage_repos: int) -> List[str]:
+    repos_for_next_parse = []
+    github_repo_id = get_github_repo_id(repo_path)
+
+    with open(git_key_path, "r") as f:
+        github_token = f.readline()
+
+    if parse_depth > 0:
+        github = Github(github_token)
+        print(f"Getting github repo id {github_repo_id}")
+        github_repo = github.get_repo(github_repo_id)
+        print(f"Got repo {github_repo_id}!")
+
+        print("Calculating stars...")
+        starred_dict: Dict[str, int] = {}
+        finished = False
+        while not finished:
+            try:
+                stargazers = github_repo.get_stargazers()
+                for i, stargazer in enumerate(stargazers):
+                    if i == max_stargazers:
+                        break
+
+                    stargazers_starred = stargazer.get_starred()
+                    for j, stargazers_star in enumerate(stargazers_starred):
+                        if j == max_stargazers_starred:
+                            break
+
+                        if stargazers_star.full_name in starred_dict:
+                            starred_dict[stargazers_star.full_name] += 1
+                        else:
+                            starred_dict[stargazers_star.full_name] = 1
+
+                repos_for_next_parse = list(
+                    [f"git@github.com:{k}.git" for k, _ in sorted(starred_dict.items(), key=lambda x: x[1])]
+                )
+                repos_for_next_parse = repos_for_next_parse[:min(next_stage_repos, len(repos_for_next_parse))]
+                finished = True
+            except GithubException as e:
+                print(f"Github is behaving: {type(e)}")
+                reset_time = github.get_rate_limit().rate.reset
+                print("Retrying after a sleep...")
+                time.sleep(reset_time - time.time())
+
+        print("Finished calculating stars")
+
+    return repos_for_next_parse
+
+
 def parse_repo(
         base_path: str, repo_path: str, do_reclone: bool, is_quiet: bool, is_chunked: bool, chunk_size: int,
         out_dir_name="out", build_dir_name="build", git_key_path="build/github_key",
@@ -141,50 +197,8 @@ def parse_repo(
         raise ValueError("Unknown repo...")
 
     if is_remote_repo:
-        github_repo_id = get_github_repo_id(repo_path)
-
-        with open(git_key_path, "r") as f:
-            github_token = f.readline()
-
-        if parse_depth > 0:
-            github = Github(github_token)
-            print(f"Getting github repo id {github_repo_id}")
-            github_repo = github.get_repo(github_repo_id)
-            print(f"Got repo {github_repo_id}!")
-
-            print("Calculating stars...")
-            starred_dict: Dict[str, int] = {}
-            finished = False
-            while not finished:
-                try:
-                    stargazers = github_repo.get_stargazers()
-                    for i, stargazer in enumerate(stargazers):
-                        if i == max_stargazers:
-                            break
-
-                        stargazers_starred = stargazer.get_starred()
-                        for j, stargazers_star in enumerate(stargazers_starred):
-                            if j == max_stargazers_starred:
-                                break
-
-                            if stargazers_star.full_name in starred_dict:
-                                starred_dict[stargazers_star.full_name] += 1
-                            else:
-                                starred_dict[stargazers_star.full_name] = 1
-
-                    repos_for_next_parse = list(
-                        [f"git@github.com:{k}.git" for k, _ in sorted(starred_dict.items(), key=lambda x: x[1])]
-                    )
-                    repos_for_next_parse = repos_for_next_parse[:min(next_stage_repos, len(repos_for_next_parse))]
-                    finished = True
-                except GithubException as e:
-                    print(f"Github is behaving: {type(e)}")
-                    reset_time = github.get_rate_limit().rate.reset
-                    print("Retrying after a sleep...")
-                    time.sleep(reset_time - time.time())
-
-            print("Finished calculating stars")
-
+        repos_for_next_parse = calculate_stars(repo_path, git_key_path, parse_depth, max_stargazers,
+                                               max_stargazers_starred, next_stage_repos)
         repo_path = clone_and_detect_path(repo_path, do_reclone, absolute_build_path)
 
     repo_path = path.join(base_path, repo_path)
@@ -195,7 +209,8 @@ def parse_repo(
     enry_on_latest_revision = run_enry_by_file(base_path, repo_path)
 
     print("Parsing the repo...")
-    result = parse_repo_commits(repo_path, enry_on_latest_revision, is_quiet, chunked=is_chunked, chunk_size=chunk_size)
+    result = parse_repo_commits(repo_path, enry_on_latest_revision, is_quiet, absolute_out_path, absolute_build_path,
+                                chunked=is_chunked, chunk_size=chunk_size)
     if repos_for_next_parse:
         return repos_for_next_parse, result
     else:
@@ -240,7 +255,8 @@ class RepoProcessWorker(multiprocessing.Process):
             self.close()
             return
 
-        with open(f"out/repoparse_{path.basename(path.normpath(self.repo_path))}.json", "w") as json_out:
+        with open(f"{self.out_dir_name}/repoparse_{path.basename(path.normpath(self.repo_path))}.json",
+                  "w") as json_out:
             json.dump(r, json_out, default=lambda x: x.to_dict() if not isinstance(x, list) else x)
 
         # Some repos are truly humongous
@@ -297,10 +313,13 @@ if __name__ == '__main__':
     arg_parser.add_argument("--quiet", "-q", action="store_true")
     arg_parser.add_argument("--chunked", "-ch", action="store_true")
     arg_parser.add_argument("--chunk-size", "-sz", nargs=1)
+    arg_parser.add_argument("--build-path", "-b", nargs=1)
+    arg_parser.add_argument("--out-path", "-o", nargs=1)
     args = arg_parser.parse_args()
 
-    # Preload treesitter so there would be no races
-    _ = load_tree_sitter(global_languages, build_dir_path="build/")
+    # Preload tree sitter so there would be no races
+    # (this function clones the git repos)
+    _ = load_tree_sitter(global_languages, build_dir_path=args.build_path[0])
 
     with multiprocessing.Manager() as manager:
         proc = RepoProcessWorker(

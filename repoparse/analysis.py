@@ -3,11 +3,13 @@ import json
 from os import walk
 from typing import Dict, TypeVar, List, Tuple
 from collections import Counter
+from os import path
 
 import numpy as np
-from sklearn.neighbors import KDTree
-from scipy.sparse import coo_array, csr_array
-from repoparse.repoparse import global_languages
+from sklearn.neighbors import KDTree as skKdTree
+from scipy.spatial import KDTree as spKdTree
+from scipy.sparse import dok_matrix, csr_matrix
+from repoparse import global_languages
 
 
 T = TypeVar("T")
@@ -16,27 +18,51 @@ T = TypeVar("T")
 def read_data(base_path: str = "./out", data_file_prefix: str = "repoparse_") -> dict:
     merged_dict = {}
     for root, dirs, files in walk(base_path):
+
         for f in files:
             if f.startswith(data_file_prefix):
-                with open(f, "r") as f_reader:
-                    repo_name = f[:len(data_file_prefix)].strip(".json")
-                    loaded_dict = json.load(f_reader)
-                    for _, author_dict in loaded_dict.items():
-                        for _, commit_dict in author_dict.items():
+                with open(path.join(root, f), "r") as f_reader:
+                    repo_name = f[len(data_file_prefix):].strip(".json")
+                    file_str = f_reader.read()
+                    if len(file_str) == 0:
+                        continue
+                    loaded_list = json.loads(file_str)
+                    processed_author_dict = {}
+                    for author_dict in loaded_list:
+                        for author, commit_dict in author_dict.items():
+                            if not commit_dict:
+                                continue
                             # this is a mishap, please don't hit me too hard
-                            patch_set = commit_dict["patch_languages"]
-                            patch_languages = commit_dict["patch_set"]
-                            commit_dict["patch_languages"] = patch_languages
-                            commit_dict["patch_set"] = patch_set
-                    merged_dict[repo_name] = loaded_dict
+                            processed_commit_dict = {}
+                            for sha, contents in commit_dict.items():
+                                patch_set = contents["patch_languages"]
+                                patch_languages = contents["patch_set"]
+                                patch_ids = contents["patch_ids"]
+
+                                processed_commit_dict["patch_set"] = patch_set
+                                processed_commit_dict["patch_languages"] = patch_languages
+                                processed_commit_dict["patch_ids"] = patch_ids
+
+                            if processed_commit_dict:
+                                processed_author_dict[author] = processed_commit_dict
+
+                    if processed_author_dict:
+                        merged_dict[repo_name] = processed_author_dict
+                        break
 
     return merged_dict
+
+
+def tri_iter(string):
+    idx = 0
+    yield string[idx:idx+3]
+    idx = idx + 3
 
 
 def make_trigrams_cnt(identifier: str) -> Dict[str, int]:
     res = {}
     identifier = identifier.lower()
-    for trigram in map(lambda tup: ''.join(tup), zip(*[identifier[i:] for i in range(3)])):
+    for trigram in tri_iter(identifier):
         if trigram not in res:
             res[trigram] = 1
         else:
@@ -51,13 +77,14 @@ def merge_counts(left_dict: Dict[str, int], right_dict: Dict[str, int]) -> Dict[
     return cntr
 
 
-def process_data(merged_dict: dict) -> Dict[str, Dict[str, Dict[str, int]]]: # The typing of this thing is too cumbersome
+def process_data(merged_dict: dict) -> Dict[str, Dict[str, Dict[str, int]]]:
+    # The typing of this thing is too cumbersome
     # An object that maps the author into two sparse matrices that are
     # a) the amounts of lines by-language
     # b) the trigram counts
     final_author_dict: Dict[str, Dict[str, Dict[str, int]]] = {}
-
     for _, repo_dict in merged_dict.items():
+        print(f"\rMerged dict item {_}", end="")
         for author_name, author_dict in repo_dict.items():
             languages_subdict: Dict[str, int] = {}
             trigrams_subdict: Dict[str, int] = {}
@@ -66,11 +93,12 @@ def process_data(merged_dict: dict) -> Dict[str, Dict[str, Dict[str, int]]]: # T
                 # Nonempty lines amount
                 patch_set = commit_dict["patch_set"]
                 for k, v in patch_set.items():
-                    patch_set[k] = len(list(filter(lambda x: x != "", v.split("\n"))))
+                    if isinstance(v, str):
+                        patch_set[k] = len(list(filter(lambda x: x != "", v.split("\n"))))
 
                 patch_languages = commit_dict["patch_languages"]
                 # Slap those together
-                for k, v in patch_languages:
+                for k, v in patch_languages.items():
                     if v not in languages_subdict:
                         languages_subdict[v] = patch_set[k]
                     else:
@@ -80,12 +108,7 @@ def process_data(merged_dict: dict) -> Dict[str, Dict[str, Dict[str, int]]]: # T
 
                 for k, v in patch_ids.items():
                     for identifier in v:
-                        trigrams_subdict = trigrams_subdict.union(make_trigrams_cnt(identifier))
-
-                # make sparse matrices
-                # load 2 matrices (by-language linenums + trigrams)
-                # into two kdtrees
-                # combine scores for queries
+                        trigrams_subdict = merge_counts(trigrams_subdict, make_trigrams_cnt(identifier))
 
             if author_name not in final_author_dict:
                 final_author_dict[author_name] = {
@@ -97,6 +120,7 @@ def process_data(merged_dict: dict) -> Dict[str, Dict[str, Dict[str, int]]]: # T
                     "languages": merge_counts(final_author_dict[author_name]["languages"], languages_subdict),
                     "trigrams": merge_counts(final_author_dict[author_name]["trigrams"], trigrams_subdict)
                 }
+
     return final_author_dict
 
 
@@ -128,41 +152,45 @@ def get_trigram_by_number(number: int) -> str:
     return "".join(reversed(trigram))
 
 
-def make_vectors(final_author_dict: Dict[str, Dict[str, Dict[str, int]]], author_index: Dict[str, int]) -> Tuple[np.array, csr_array]:
+def make_vectors(final_author_dict: Dict[str, Dict[str, Dict[str, int]]], author_index: Dict[str, int]) -> Tuple[np.array, csr_matrix]:
     language_matrix = np.zeros((len(author_index), len(LANGUAGES_INDEX)))
-    trigram_coo_array = coo_array(len(author_index), TOTAL_TRIGRAM_COUNT, dtype=int)
+    trigram_dok_array = dok_matrix((len(author_index), TOTAL_TRIGRAM_COUNT), dtype=int)
     for author_name, author_dict in final_author_dict.items():
-        for lang, cnt in author_dict["languages"]:
+        for lang, cnt in author_dict["languages"].items():
             language_matrix[author_index[author_name], LANGUAGES_INDEX[lang]] += cnt
-        for trigram, cnt in author_dict["trigrams"]:
-            trigram_coo_array[author_index[author_name], get_trigram_number(trigram)] += cnt
+        for trigram, cnt in author_dict["trigrams"].items():
+            trigram_dok_array[author_index[author_name], get_trigram_number(trigram)] += cnt
 
-    return language_matrix, csr_array(trigram_coo_array)
+    return language_matrix, csr_matrix(trigram_dok_array)
 
 
 if __name__ == "__main__":
-    raw_data = process_data(read_data())
+    print("reading data...")
+    data_from_files = read_data()
+    print("processing data...")
+    raw_data = process_data(data_from_files)
     author_index = {}
     for i, author_name in enumerate(sorted(raw_data.keys())):
-        print(author_name)
         author_index[author_name] = i
 
     lang_matrix, trigram_matrix = make_vectors(raw_data, author_index)
 
-    lang_tree = KDTree(lang_matrix)
-    trigram_tree = KDTree(trigram_matrix)
+    print(author_index)
+
+    lang_tree = skKdTree(lang_matrix)
+    trigram_tree = skKdTree(trigram_matrix.toarray())
 
     print("Welcome to the analysis repl! Enter a developer name to get the stats or `quit` to quit!")
     while (inp := input(">> ")) != "quit":
         if inp not in author_index:
             print("Can't find the specified author! Try again!")
+            continue
         index = author_index[inp]
-        dist, closest = lang_tree.query(lang_matrix[index, :], 3)
+        dist, closest = lang_tree.query(lang_matrix[index, :].reshape(1, -1), min(len(author_index), 3))
         print(f"Closest authors by languages: {closest}, respective distances: {dist}")
 
-        dist, closest = trigram_tree.query(trigram_matrix[index, :], 3)
+        dist, closest = trigram_tree.query(trigram_matrix[index, :].reshape(1, -1).toarray(), min(len(author_index), 3))
         print(f"Closest authors by trigrams: {closest}, respective distances: {dist}")
 
 
-# WRITE A QUERY REPL
 
