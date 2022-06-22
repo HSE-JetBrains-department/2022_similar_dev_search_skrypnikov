@@ -86,6 +86,7 @@ def patch_set_insertions_to_dict(repo_path: str, patch_set: PatchSet) -> Dict[st
 
 @dataclass(init=True)
 class RepoParseContext:
+    """Context for parsing a (part) of a repo"""
     enry_on_latest_revision: Dict[str, List[str]]
     local_ts_lang_objs: Dict[str, Language]
     local_ts_parser: Parser
@@ -99,6 +100,7 @@ class RepoParseContext:
     out_dir_path: str
 
     def parse_commit_with_single_parent(self, repo, commit):
+        """Parses a commit"""
         parent = repo[commit.parents[0]]
 
         diff_str = ''
@@ -151,6 +153,7 @@ class RepoParseContext:
         )
 
     def _extract_commit_info(self, repo_path: str, diff_str: str) -> CommitParseResult:
+        """Extracts languages, lines and identifiers from a diff and returns them as an object."""
         try:
             patch_languages = {}
             patch_set_dict = {}

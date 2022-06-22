@@ -13,6 +13,7 @@ T = TypeVar("T")
 
 
 def read_data(base_path: str = "./out", data_file_prefix: str = "repoparse_") -> dict:
+    """Reads raw data from files"""
     merged_dict = {}
     for root, dirs, files in walk(base_path):
 
@@ -72,10 +73,12 @@ def merge_counts(left_dict: Dict[str, int], right_dict: Dict[str, int]) -> Dict[
 
 
 def process_data(merged_dict: dict) -> Dict[str, Dict[str, Dict[str, int]]]:
-    # The typing of this thing is too cumbersome
-    # An object that maps the author into two sparse matrices that are
-    # a) the amounts of lines by-language
-    # b) the trigram counts
+    """Preprocesses data into a final structure.
+     The typing of this thing is too cumbersome
+     Returns an object that maps the author into two dictionaries that are
+     a) the amounts of lines by-language
+     b) the trigram counts
+    """
     final_author_dict: Dict[str, Dict[str, Dict[str, int]]] = {}
     for _, repo_dict in merged_dict.items():
         print(f"\rMerged dict item {_}", end="")
@@ -147,6 +150,7 @@ def get_trigram_by_number(number: int) -> str:
 
 
 def make_vectors(final_author_dict: Dict[str, Dict[str, Dict[str, int]]], author_index: Dict[str, int]) -> Tuple[np.array, csr_matrix]:
+    """Packs data into matrices"""
     language_matrix = np.zeros((len(author_index), len(LANGUAGES_INDEX)))
     trigram_dok_array = dok_matrix((len(author_index), TOTAL_TRIGRAM_COUNT), dtype=int)
     for author_name, author_dict in final_author_dict.items():

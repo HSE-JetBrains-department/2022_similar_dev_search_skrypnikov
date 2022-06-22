@@ -30,6 +30,7 @@ def _parse_repo_commits_chunked(repo_path: str, enry_dict: Dict[str, List[str]],
 
 
 def _parse_commit_chunk(chunk_tuple: Tuple[int, str, Dict[str, List[str]], List[ShaFile], str, str]) -> ParsedRepo:
+    """Parses commits in parallel"""
     chunk_n, repo_path, enry_dict, chunk, out_path, build_path = chunk_tuple
     print(f"Chunk {chunk_n} started...")
 
@@ -62,6 +63,7 @@ def _parse_commit_chunk(chunk_tuple: Tuple[int, str, Dict[str, List[str]], List[
 
 def _parse_repo_commits_not_chunked(repo_path: str, enry_dict: Dict[str, List[str]], quiet: bool, out_path: str,
                                     build_path: str) -> ParsedRepo:
+    """Parses commits non-asynchronously"""
     repo = Repo(repo_path)
     parsed_repo = ParsedRepo({})
     parser = Parser()
@@ -95,6 +97,7 @@ def parse_repo_commits(repo_path: str, enry_dict: dict, quiet: bool, out_path: s
 
 
 def clone_and_detect_path(repo_path: str, force_reclone: bool, build_dir_path: str) -> str:
+    """Clones a repo from a remote and returns the path to it in the build_dir_path"""
     if not path.exists(build_dir_path):
         makedirs(build_dir_path)
 
@@ -117,6 +120,7 @@ def clone_and_detect_path(repo_path: str, force_reclone: bool, build_dir_path: s
 
 
 def get_github_repo_id(repo_path: str) -> Union[str, None]:
+    """A helper to fetch the github name from repo path"""
     parsing_str: str
 
     if repo_path.startswith("git@"):
@@ -129,6 +133,7 @@ def get_github_repo_id(repo_path: str) -> Union[str, None]:
 
 def calculate_stars(repo_path: str, git_key_path: str, parse_depth: int, max_stargazers: int,
                     max_stargazers_starred: int, next_stage_repos: int) -> List[str]:
+    """Calculates a list of repos for the next stage of parsing with parse_repo"""
     repos_for_next_parse = []
     github_repo_id = get_github_repo_id(repo_path)
 
@@ -178,10 +183,11 @@ def calculate_stars(repo_path: str, git_key_path: str, parse_depth: int, max_sta
 
 
 def parse_repo(
-        base_path: str, repo_path: str, do_reclone: bool, is_quiet: bool, is_chunked: bool, chunk_size: int,
+        *, base_path: str, repo_path: str, do_reclone: bool, is_quiet: bool, is_chunked: bool, chunk_size: int,
         out_dir_name="out", build_dir_name="build", git_key_path="build/github_key",
         parse_depth=3, max_stargazers=100, max_stargazers_starred=10, next_stage_repos=2, pool_processes=5
 ) -> Tuple[Union[None, List[str]], ParsedRepo]:
+    """Main repo parse process entrance point"""
     absolute_out_path = path.join(base_path, out_dir_name)
     absolute_build_path = path.join(base_path, build_dir_name)
     repos_for_next_parse: Union[None, List[str]] = None
@@ -218,8 +224,9 @@ def parse_repo(
 
 
 class RepoProcessWorker(multiprocessing.Process):
+    """This is an abstraction for a process that works to parse a repo"""
 
-    def __init__(self, base_path: str, repo_path: str, do_reclone: bool, is_quiet: bool, is_chunked: bool,
+    def __init__(self, *, base_path: str, repo_path: str, do_reclone: bool, is_quiet: bool, is_chunked: bool,
                  chunk_size: int, visited_dict: Dict[str, int], visited_lock: multiprocessing.Lock,
                  out_dir_name="out", build_dir_name="build", git_key_path="build/github_key",
                  parse_depth=3, max_stargazers=1000, max_stargazers_starred=10, next_stage_repos=4, pool_processes=5):
@@ -246,9 +253,19 @@ class RepoProcessWorker(multiprocessing.Process):
 
         try:
             next_repos, r = parse_repo(
-                self.base_path, self.repo_path, self.do_reclone, self.is_quiet, self.is_chunked, self.chunk_size,
-                self.out_dir_name, self.build_dir_name, self.git_key_path, self.parse_depth, self.max_stargazers,
-                self.max_stargazers_starred, self.next_stage_repos
+                base_path=self.base_path,
+                repo_path=self.repo_path,
+                do_reclone=self.do_reclone,
+                is_quiet=self.is_quiet,
+                is_chunked=self.is_chunked,
+                chunk_size=self.chunk_size,
+                out_dir_name=self.out_dir_name,
+                build_dir_name=self.build_dir_name,
+                git_key_path=self.git_key_path,
+                parse_depth=self.parse_depth,
+                max_stargazers=self.max_stargazers,
+                max_stargazers_starred=self.max_stargazers_starred,
+                next_stage_repos=self.next_stage_repos
             )
         except Exception as e:
             print(f"Closing {self.repo_path} due to having encountered an error in the parser...")
@@ -283,11 +300,21 @@ class RepoProcessWorker(multiprocessing.Process):
 
             for repo_path in next_repos:
                 worker = RepoProcessWorker(
-                    self.base_path, repo_path, self.do_reclone, self.is_quiet, self.is_chunked, self.chunk_size,
-                    self.visited_dict, self.visited_lock,
-                    self.out_dir_name, self.build_dir_name, self.git_key_path, self.parse_depth - 1,
-                    self.max_stargazers,
-                    self.max_stargazers_starred, self.next_stage_repos
+                    base_path=self.base_path,
+                    repo_path=repo_path,
+                    do_reclone=self.do_reclone,
+                    is_quiet=self.is_quiet,
+                    is_chunked=self.is_chunked,
+                    chunk_size=self.chunk_size,
+                    visited_dict=self.visited_dict,
+                    visited_lock=self.visited_lock,
+                    out_dir_name=self.out_dir_name,
+                    build_dir_name=self.build_dir_name,
+                    git_key_path=self.git_key_path,
+                    parse_depth=self.parse_depth - 1,
+                    max_stargazers=self.max_stargazers,
+                    max_stargazers_starred=self.max_stargazers_starred,
+                    next_stage_repos=self.next_stage_repos
                 )
                 worker.start()
                 wait_list.append(worker)
@@ -325,9 +352,14 @@ if __name__ == '__main__':
 
     with multiprocessing.Manager() as manager:
         proc = RepoProcessWorker(
-            CWD, args.repo[0], args.force_reclone, args.quiet, args.chunked,
-            int(args.chunk_size[0] if args.chunk_size else 0),
-            manager.dict(), manager.Lock(),
+            base_path=CWD,
+            repo_path=args.repo[0],
+            do_reclone=args.force_reclone,
+            is_quiet=args.quiet,
+            is_chunked=args.chunked,
+            chunk_size=int(args.chunk_size[0] if args.chunk_size else 0),
+            visited_dict=manager.dict(),
+            visited_lock=manager.Lock(),
             out_dir_name=args.out_path[0],
             build_dir_name=args.build_path[0],
             pool_processes=args.process_amount[0]
