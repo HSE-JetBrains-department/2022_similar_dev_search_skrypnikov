@@ -1,6 +1,6 @@
-import sys
 from dataclasses import dataclass
 from os import path
+import sys
 from typing import Dict, List, Union
 
 from dulwich.patch import patch_filename, is_binary, gen_diff_header, unified_diff

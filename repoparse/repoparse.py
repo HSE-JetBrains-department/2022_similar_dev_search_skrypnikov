@@ -1,9 +1,9 @@
+from argparse import ArgumentParser
 import json
 import multiprocessing
-import time
-from argparse import ArgumentParser
 from os import makedirs, system, getcwd, path
 from shutil import rmtree
+import time
 from typing import Dict, List, Tuple
 from typing import Union
 

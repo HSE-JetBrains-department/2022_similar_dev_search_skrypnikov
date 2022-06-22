@@ -1,5 +1,5 @@
-import json
 from collections import Counter, defaultdict
+import json
 from os import path
 from os import walk
 from typing import Dict, TypeVar, Tuple
