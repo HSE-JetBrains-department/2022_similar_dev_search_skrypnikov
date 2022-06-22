@@ -19,10 +19,10 @@ GLOBAL_LANGUAGES = ["python", "c", "java", "javascript", "php"]
 
 
 def _parse_repo_commits_chunked(repo_path: str, enry_dict: Dict[str, List[str]], chunk_size: int, out_path: str,
-                                build_path: str):
+                                build_path: str, pool_processes: int):
     print('Starting parallel map...')
     repo = Repo(repo_path)
-    with multiprocessing.Pool(12) as p:
+    with multiprocessing.Pool(pool_processes) as p:
         return p.map(
             _parse_commit_chunk,
             [(i, repo_path, enry_dict, list(chunk), out_path, build_path) for i, chunk in
@@ -88,11 +88,11 @@ def _parse_repo_commits_not_chunked(repo_path: str, enry_dict: Dict[str, List[st
 
 
 def parse_repo_commits(repo_path: str, enry_dict: dict, quiet: bool, out_path: str, build_path: str,
-                       chunked: bool = False, chunk_size: int = 10000):
+                       chunked: bool = False, chunk_size: int = 10000, pool_processes=5):
     if not chunked:
         return _parse_repo_commits_not_chunked(repo_path, enry_dict, quiet, out_path, build_path)
     else:
-        return _parse_repo_commits_chunked(repo_path, enry_dict, chunk_size, out_path, build_path)
+        return _parse_repo_commits_chunked(repo_path, enry_dict, chunk_size, out_path, build_path, pool_processes)
 
 
 def clone_and_detect_path(repo_path: str, force_reclone: bool, build_dir_path: str) -> str:
@@ -181,7 +181,7 @@ def calculate_stars(repo_path: str, git_key_path: str, parse_depth: int, max_sta
 def parse_repo(
         base_path: str, repo_path: str, do_reclone: bool, is_quiet: bool, is_chunked: bool, chunk_size: int,
         out_dir_name="out", build_dir_name="build", git_key_path="build/github_key",
-        parse_depth=3, max_stargazers=100, max_stargazers_starred=10, next_stage_repos=2
+        parse_depth=3, max_stargazers=100, max_stargazers_starred=10, next_stage_repos=2, pool_processes=5
 ) -> Tuple[Union[None, List[str]], ParsedRepo]:
     absolute_out_path = path.join(base_path, out_dir_name)
     absolute_build_path = path.join(base_path, build_dir_name)
@@ -211,7 +211,7 @@ def parse_repo(
 
     print("Parsing the repo...")
     result = parse_repo_commits(repo_path, enry_on_latest_revision, is_quiet, absolute_out_path, absolute_build_path,
-                                chunked=is_chunked, chunk_size=chunk_size)
+                                chunked=is_chunked, chunk_size=chunk_size, pool_processes=pool_processes)
     if repos_for_next_parse:
         return repos_for_next_parse, result
     else:
@@ -223,7 +223,7 @@ class RepoProcessWorker(multiprocessing.Process):
     def __init__(self, base_path: str, repo_path: str, do_reclone: bool, is_quiet: bool, is_chunked: bool,
                  chunk_size: int, visited_dict: Dict[str, int], visited_lock: multiprocessing.Lock,
                  out_dir_name="out", build_dir_name="build", git_key_path="build/github_key",
-                 parse_depth=3, max_stargazers=1000, max_stargazers_starred=10, next_stage_repos=4):
+                 parse_depth=3, max_stargazers=1000, max_stargazers_starred=10, next_stage_repos=4, pool_processes=5):
         super().__init__()
         self.base_path = base_path
         self.repo_path = repo_path
@@ -240,6 +240,7 @@ class RepoProcessWorker(multiprocessing.Process):
         self.next_stage_repos = next_stage_repos
         self.visited_dict = visited_dict
         self.visited_lock = visited_lock
+        self.pool_processes = pool_processes
 
     def run(self):
         print(f"PARSE DEPTH: {self.parse_depth}")
@@ -316,6 +317,7 @@ if __name__ == '__main__':
     arg_parser.add_argument("--chunk-size", "-sz", nargs=1)
     arg_parser.add_argument("--build-path", "-b", nargs=1)
     arg_parser.add_argument("--out-path", "-o", nargs=1)
+    arg_parser.add_argument("--process-amount", "-p", nargs=1)
     args = arg_parser.parse_args()
 
     # Preload tree sitter so there would be no races
@@ -326,7 +328,10 @@ if __name__ == '__main__':
         proc = RepoProcessWorker(
             CWD, args.repo[0], args.force_reclone, args.quiet, args.chunked,
             int(args.chunk_size[0] if args.chunk_size else 0),
-            manager.dict(), manager.Lock()
+            manager.dict(), manager.Lock(),
+            out_dir_name=args.out_path[0],
+            build_dir_name=args.build_path[0],
+            pool_processes=args.process_amount[0]
         )
 
         proc.start()
