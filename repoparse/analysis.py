@@ -1,16 +1,14 @@
 import json
-
-from os import walk
-from typing import Dict, TypeVar, List, Tuple
-from collections import Counter
+from collections import Counter, defaultdict
 from os import path
+from os import walk
+from typing import Dict, TypeVar, Tuple
 
 import numpy as np
-from sklearn.neighbors import KDTree as skKdTree
-from scipy.spatial import KDTree as spKdTree
 from scipy.sparse import dok_matrix, csr_matrix
-from repoparse import global_languages
+from sklearn.neighbors import KDTree as skKdTree
 
+from repoparse import GLOBAL_LANGUAGES
 
 T = TypeVar("T")
 
@@ -60,13 +58,10 @@ def tri_iter(string):
 
 
 def make_trigrams_cnt(identifier: str) -> Dict[str, int]:
-    res = {}
+    res = defaultdict(int)
     identifier = identifier.lower()
     for trigram in tri_iter(identifier):
-        if trigram not in res:
-            res[trigram] = 1
-        else:
-            res[trigram] += 1
+        res[trigram] += 1
     return res
 
 
@@ -125,7 +120,7 @@ def process_data(merged_dict: dict) -> Dict[str, Dict[str, Dict[str, int]]]:
 
 
 LANGUAGES_INDEX = {}
-for i, k in enumerate(global_languages):
+for i, k in enumerate(GLOBAL_LANGUAGES):
     LANGUAGES_INDEX[k] = i
 
 TRIGRAMS_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -191,6 +186,3 @@ if __name__ == "__main__":
 
         dist, closest = trigram_tree.query(trigram_matrix[index, :].reshape(1, -1).toarray(), min(len(author_index), 3))
         print(f"Closest authors by trigrams: {closest}, respective distances: {dist}")
-
-
-

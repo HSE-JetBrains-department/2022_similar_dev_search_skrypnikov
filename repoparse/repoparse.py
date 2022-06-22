@@ -5,16 +5,17 @@ from argparse import ArgumentParser
 from os import makedirs, system, getcwd, path
 from shutil import rmtree
 from typing import Dict, List, Tuple
-from dulwich.objects import Commit, ShaFile
-from dulwich.repo import Repo
-from tree_sitter import Parser
-from internal.utils import group, run_enry_by_file, load_tree_sitter
-from internal.classes import ParsedRepo, RepoParseContext
-from github import Github, GithubException
-
 from typing import Union
 
-global_languages = ["python", "c", "java", "javascript", "php"]
+from dulwich.objects import Commit, ShaFile
+from dulwich.repo import Repo
+from github import Github, GithubException
+from tree_sitter import Parser
+
+from internal.classes import ParsedRepo, RepoParseContext
+from internal.utils import group, run_enry_by_file, load_tree_sitter
+
+GLOBAL_LANGUAGES = ["python", "c", "java", "javascript", "php"]
 
 
 def _parse_repo_commits_chunked(repo_path: str, enry_dict: Dict[str, List[str]], chunk_size: int, out_path: str,
@@ -38,7 +39,7 @@ def _parse_commit_chunk(chunk_tuple: Tuple[int, str, Dict[str, List[str]], List[
     repo = Repo(repo_path)
     parsed_repo = ParsedRepo({})
     chunk_local_parser = Parser()
-    chunk_local_lang_objs = load_tree_sitter(global_languages, build_path)
+    chunk_local_lang_objs = load_tree_sitter(GLOBAL_LANGUAGES, build_path)
 
     ctx = RepoParseContext(
         enry_dict,
@@ -65,7 +66,7 @@ def _parse_repo_commits_not_chunked(repo_path: str, enry_dict: Dict[str, List[st
     repo = Repo(repo_path)
     parsed_repo = ParsedRepo({})
     parser = Parser()
-    lang_objs = load_tree_sitter(global_languages, build_path)
+    lang_objs = load_tree_sitter(GLOBAL_LANGUAGES, build_path)
 
     ctx = RepoParseContext(
         enry_dict,
@@ -319,7 +320,7 @@ if __name__ == '__main__':
 
     # Preload tree sitter so there would be no races
     # (this function clones the git repos)
-    _ = load_tree_sitter(global_languages, build_dir_path=args.build_path[0])
+    _ = load_tree_sitter(GLOBAL_LANGUAGES, build_dir_path=args.build_path[0])
 
     with multiprocessing.Manager() as manager:
         proc = RepoProcessWorker(

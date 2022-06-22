@@ -1,13 +1,11 @@
+from itertools import islice, chain
 from os import walk, path, makedirs, system
 from sys import stderr
-from itertools import islice, chain
 from typing import List, Iterable, TypeVar, Dict
 
+from dulwich.objects import S_ISGITLINK, Blob
 from enry import get_languages
 from tree_sitter import Language
-
-
-from dulwich.objects import S_ISGITLINK, Blob
 
 T = TypeVar('T')
 
