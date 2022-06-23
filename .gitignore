@@ -153,3 +153,5 @@ cython_debug/
 
 # This is a directory that countains the output
 out
+
+pyrightconfig.json

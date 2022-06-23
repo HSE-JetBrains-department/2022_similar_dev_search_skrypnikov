@@ -33,18 +33,23 @@ def get_content(repo, mode, hexsha):
         return repo.object_store[hexsha]
 
 
-def get_lines(content: str) -> List[str]: return content.splitlines() if content else []
+def get_lines(content: str) -> List[str]: 
+    return content.splitlines() if content else []
 
 
 # Python is a readable multi-purpose language
 def unwrap_bytes_gen_to_str(gen: Iterable[bytes], enc: str = "utf-8") -> str:
-    return ''.join([it.decode(enc) if not isinstance(it, str) else it for it in gen])
+    return ''.join(
+        [it.decode(enc) if not isinstance(it, str) else it for it in gen]
+    )
 
 
-def cleanup_diff(diff: List[str]) -> str: return '\n'.join(map(lambda s: s[1:] if s[0] == '+' else s, diff))
+def cleanup_diff(diff: List[str]) -> str: 
+    return '\n'.join(map(lambda s: s[1:] if s[0] == '+' else s, diff))
 
 
-def path_base_norm(some_path: str) -> str: return path.normpath(path.basename(some_path))
+def path_base_norm(some_path: str) -> str: 
+    return path.normpath(path.basename(some_path))
 
 
 def run_enry_by_file(base_path: str, repo_path: str) -> Dict[str, List[str]]:
@@ -64,7 +69,9 @@ def run_enry_by_file(base_path: str, repo_path: str) -> Dict[str, List[str]]:
 TREE_SITTER_SO = 'tree_sitter_collected.so'
 
 
-def load_tree_sitter(languages: List[str], build_dir_path: str) -> Dict[str, Language]:
+def load_tree_sitter(
+    languages: List[str], build_dir_path: str
+) -> Dict[str, Language]:
     if not path.exists(build_dir_path):
         makedirs(build_dir_path)
 
@@ -75,10 +82,14 @@ def load_tree_sitter(languages: List[str], build_dir_path: str) -> Dict[str, Lan
     for ts_moniker in monikers:
         moniker_repo_path = path.join(build_dir_path, ts_moniker)
         if not path.exists(moniker_repo_path):
-            exit_code = system(f"git clone https://github.com/tree-sitter/{ts_moniker} {moniker_repo_path}")
+            git_cmd = f"git clone https://github.com/tree-sitter/{ts_moniker}"
+            exit_code = system(f"{git_cmd} {moniker_repo_path}")
             if exit_code:
-                stderr.write(f"ERROR: Couldn't clone the git repo for tree sitter language {ts_moniker}\n")
-                stderr.write(f"Aborting...\n")
+                stderr.write(
+                    "ERROR: Couldn't clone the git repo for tree sitter " + 
+                    f"language {ts_moniker}\n"
+                )
+                stderr.write("Aborting...\n")
                 exit(1)
 
     tree_sitter_so_path = path.join(build_dir_path, TREE_SITTER_SO)
@@ -89,4 +100,3 @@ def load_tree_sitter(languages: List[str], build_dir_path: str) -> Dict[str, Lan
     )
 
     return {lang: Language(tree_sitter_so_path, lang) for lang in languages}
-

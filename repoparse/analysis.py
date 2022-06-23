@@ -12,7 +12,9 @@ from .repoparse import GLOBAL_LANGUAGES
 T = TypeVar("T")
 
 
-def read_data(base_path: str = "./out", data_file_prefix: str = "repoparse_") -> dict:
+def read_data(
+    base_path: str = "./out", data_file_prefix: str = "repoparse_"
+) -> dict:
     """Reads raw data from files"""
     merged_dict = {}
     for root, _, files in walk(base_path):
@@ -27,22 +29,22 @@ def read_data(base_path: str = "./out", data_file_prefix: str = "repoparse_") ->
                     loaded_list = json.loads(file_str)
                     processed_author_dict = {}
                     for author_dict in loaded_list:
-                        for author, commit_dict in author_dict.items():
-                            if not commit_dict:
+                        for author, raw_commit_dict in author_dict.items():
+                            if not raw_commit_dict:
                                 continue
                             # this is a mishap, please don't hit me too hard
-                            processed_commit_dict = {}
-                            for _, contents in commit_dict.items():
+                            commit_dict = {}
+                            for _, contents in raw_commit_dict.items():
                                 patch_set = contents["patch_languages"]
-                                patch_languages = contents["patch_set"]
+                                patch_langs = contents["patch_set"]
                                 patch_ids = contents["patch_ids"]
 
-                                processed_commit_dict["patch_set"] = patch_set
-                                processed_commit_dict["patch_languages"] = patch_languages
-                                processed_commit_dict["patch_ids"] = patch_ids
+                                commit_dict["patch_set"] = patch_set
+                                commit_dict["patch_languages"] = patch_langs
+                                commit_dict["patch_ids"] = patch_ids
 
-                            if processed_commit_dict:
-                                processed_author_dict[author] = processed_commit_dict
+                            if commit_dict:
+                                processed_author_dict[author] = commit_dict
 
                     if processed_author_dict:
                         merged_dict[repo_name] = processed_author_dict
@@ -65,7 +67,9 @@ def make_trigrams_cnt(identifier: str) -> Dict[str, int]:
     return res
 
 
-def merge_counts(left_dict: Dict[str, int], right_dict: Dict[str, int]) -> Dict[str, int]:
+def merge_counts(
+    left_dict: Dict[str, int], right_dict: Dict[str, int]
+) -> Dict[str, int]:
     cntr = Counter()
     cntr.update(left_dict)
     cntr.update(right_dict)
@@ -91,7 +95,9 @@ def process_data(merged_dict: dict) -> Dict[str, Dict[str, Dict[str, int]]]:
                 patch_set = commit_dict["patch_set"]
                 for k, v in patch_set.items():
                     if isinstance(v, str):
-                        patch_set[k] = len(list(filter(lambda x: x != "", v.split("\n"))))
+                        patch_set[k] = len(list(filter(
+                            lambda x: x != "", v.split("\n")
+                        )))
 
                 patch_languages = commit_dict["patch_languages"]
                 # Slap those together
@@ -105,7 +111,9 @@ def process_data(merged_dict: dict) -> Dict[str, Dict[str, Dict[str, int]]]:
 
                 for k, v in patch_ids.items():
                     for identifier in v:
-                        trigrams_subdict = merge_counts(trigrams_subdict, make_trigrams_cnt(identifier))
+                        trigrams_subdict = merge_counts(
+                            trigrams_subdict, make_trigrams_cnt(identifier)
+                        )
 
             if author_name not in final_author_dict:
                 final_author_dict[author_name] = {
@@ -114,8 +122,14 @@ def process_data(merged_dict: dict) -> Dict[str, Dict[str, Dict[str, int]]]:
                 }
             else:
                 final_author_dict[author_name] = {
-                    "languages": merge_counts(final_author_dict[author_name]["languages"], languages_subdict),
-                    "trigrams": merge_counts(final_author_dict[author_name]["trigrams"], trigrams_subdict)
+                    "languages": merge_counts(
+                        final_author_dict[author_name]["languages"], 
+                        languages_subdict
+                    ),
+                    "trigrams": merge_counts(
+                        final_author_dict[author_name]["trigrams"], 
+                        trigrams_subdict
+                    )
                 }
 
     return final_author_dict
@@ -135,10 +149,9 @@ TOTAL_TRIGRAM_COUNT = TRIGRAMS_CHARS_LEN ** 3
 
 
 def get_trigram_number(trigram: str) -> int:
-    # trigram number = pos * 1 + pos * len(trigrams_chars) + pos * len(trigrams_chars) ** 2
     return TRIGRAMS_CHARS_POS[trigram[0]] \
-           + TRIGRAMS_CHARS_POS[trigram[1]] * TRIGRAMS_CHARS_LEN \
-           + TRIGRAMS_CHARS_POS[trigram[2]] * TRIGRAMS_CHARS_LEN * TRIGRAMS_CHARS_LEN
+        + TRIGRAMS_CHARS_POS[trigram[1]] * TRIGRAMS_CHARS_LEN \
+        + TRIGRAMS_CHARS_POS[trigram[2]] * TRIGRAMS_CHARS_LEN ** 2
 
 
 def get_trigram_by_number(number: int) -> str:
@@ -149,15 +162,25 @@ def get_trigram_by_number(number: int) -> str:
     return "".join(reversed(trigram))
 
 
-def make_vectors(final_author_dict: Dict[str, Dict[str, Dict[str, int]]], author_index: Dict[str, int]) -> Tuple[np.ndarray, csr_matrix]:
+def make_vectors(
+    final_author_dict: Dict[str, Dict[str, Dict[str, int]]], 
+    author_index: Dict[str, int]
+) -> Tuple[np.ndarray, csr_matrix]:
     """Packs data into matrices"""
     language_matrix = np.zeros((len(author_index), len(LANGUAGES_INDEX)))
-    trigram_dok_array = dok_matrix((len(author_index), TOTAL_TRIGRAM_COUNT), dtype=int)
+    trigram_dok_array = dok_matrix(
+        (len(author_index), TOTAL_TRIGRAM_COUNT), dtype=int
+    )
     for author_name, author_dict in final_author_dict.items():
         for lang, cnt in author_dict["languages"].items():
-            language_matrix[author_index[author_name], LANGUAGES_INDEX[lang]] += cnt
+            language_matrix[
+                author_index[author_name], LANGUAGES_INDEX[lang]
+            ] += cnt
         for trigram, cnt in author_dict["trigrams"].items():
-            trigram_dok_array[author_index[author_name], get_trigram_number(trigram)] += cnt
+            trigram_dok_array[
+                author_index[author_name], 
+                get_trigram_number(trigram)
+            ] += cnt
 
     return language_matrix, csr_matrix(trigram_dok_array)
 
@@ -178,14 +201,23 @@ if __name__ == "__main__":
     lang_tree = skKdTree(lang_matrix)
     trigram_tree = skKdTree(trigram_matrix.toarray())
 
-    print("Welcome to the analysis repl! Enter a developer name to get the stats or `quit` to quit!")
+    print("Welcome to the analysis repl!")
+    print("Enter a developer name to get the stats or `quit` to quit!")
     while (inp := input(">> ")) != "quit":
         if inp not in author_index:
             print("Can't find the specified author! Try again!")
             continue
         index = author_index[inp]
-        dist, closest = lang_tree.query(lang_matrix[index, :].reshape(1, -1), min(len(author_index), 3))
-        print(f"Closest authors by languages: {closest}, respective distances: {dist}")
+        dist, closest = lang_tree.query(
+            lang_matrix[index, :].reshape(1, -1), 
+            min(len(author_index), 3)
+        )
+        print(f"Closest authors by languages: {closest},")
+        print(f"respective distances: {dist}")
 
-        dist, closest = trigram_tree.query(trigram_matrix[index, :].reshape(1, -1).toarray(), min(len(author_index), 3))
-        print(f"Closest authors by trigrams: {closest}, respective distances: {dist}")
+        dist, closest = trigram_tree.query(
+            trigram_matrix[index, :].reshape(1, -1).toarray(), 
+            min(len(author_index), 3)
+        )
+        print(f"Closest authors by languages: {closest},")
+        print(f"respective distances: {dist}")

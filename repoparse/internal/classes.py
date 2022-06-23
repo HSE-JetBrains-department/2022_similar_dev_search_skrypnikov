@@ -3,8 +3,10 @@ from os import path
 import sys
 from typing import Dict, List, Union, cast
 
-from dulwich.patch import gen_diff_header, is_binary, patch_filename, unified_diff
-from internal.utils import cleanup_diff, get_content, get_lines, unwrap_bytes_gen_to_str
+from dulwich.patch import gen_diff_header, is_binary, patch_filename, \
+    unified_diff
+from internal.utils import cleanup_diff, get_content, get_lines, \
+    unwrap_bytes_gen_to_str
 from tree_sitter import Language, Parser
 from unidiff import PatchSet, UnidiffParseError
 
@@ -73,7 +75,9 @@ class ParsedRepo:
         return {k: v for k, v in self.commits_by_author.items()}
 
 
-def patch_set_insertions_to_dict(repo_path: str, patch_set: PatchSet) -> Dict[str, List[str]]:
+def patch_set_insertions_to_dict(
+    repo_path: str, patch_set: PatchSet
+) -> Dict[str, List[str]]:
     dict_obj = {}
     for patched_file in patch_set:
         changes_list = []
@@ -108,19 +112,24 @@ class RepoParseContext:
         # Had to reverse-engineer (partially borrow) it from dulwich sources
         # ¯\_(ツ)_/¯
         changes = repo.object_store.tree_changes(commit.tree, parent.tree)
-        for (old_path, new_path), (old_mode, new_mode), (old_sha, new_sha) in changes:
+        for (old_path, new_path), (old_mode, new_mode), (old_sha, new_sha) in changes:  # noqa: E501
             p_old_path = cast(bytes, patch_filename(old_path, b'a'))
             p_new_path = cast(bytes, patch_filename(new_path, b'b'))
 
             diff_str += unwrap_bytes_gen_to_str(
-                gen_diff_header((old_path, new_path), (old_mode, new_mode), (old_sha, new_sha))
+                gen_diff_header(
+                    (old_path, new_path), 
+                    (old_mode, new_mode), 
+                    (old_sha, new_sha)
+                )
             )
 
             old_content = get_content(repo, old_mode, old_sha)
             new_content = get_content(repo, new_mode, new_sha)
 
             if is_binary(old_content.data) or is_binary(new_content.data):
-                diff_str += f"Binary files {p_old_path.decode()} and {p_new_path.decode()} differ\n"
+                diff_str += f"Binary files {p_old_path.decode()} " + \
+                    f"and {p_new_path.decode()} differ\n"
             else:
                 try:
                     diff_str += unwrap_bytes_gen_to_str(
@@ -136,7 +145,9 @@ class RepoParseContext:
 
         parsed_commits = self.parsed_repo[commit.author.decode()]
         if parsed_commits is None:
-            parsed_commits = self.parsed_repo[commit.author.decode()] = ParsedCommits({})
+            parsed_commits = self.parsed_repo[
+                commit.author.decode()
+            ] = ParsedCommits({})
 
         commit_parse_result = self._extract_commit_info(repo.path, diff_str)
         if not commit_parse_result.is_ok:
@@ -152,48 +163,68 @@ class RepoParseContext:
             commit_parse_result
         )
 
-    def _extract_commit_info(self, repo_path: str, diff_str: str) -> CommitParseResult:
-        """Extracts languages, lines and identifiers from a diff and returns them as an object."""
+    def _extract_commit_info(
+        self, repo_path: str, diff_str: str
+    ) -> CommitParseResult:
+        """Extracts languages, lines and identifiers from a diff and returns 
+        them as an object."""
         try:
             patch_languages = {}
             patch_set_dict = {}
             patch_ids_dict = {}
 
             # Splice out the parsed files
-            patch_files = patch_set_insertions_to_dict(repo_path, PatchSet(diff_str))
+            patch_files = patch_set_insertions_to_dict(
+                repo_path, PatchSet(diff_str)
+            )
 
             for f in patch_files:
                 file_path = path.join(repo_path, f)
                 if file_path in self.enry_on_latest_revision:
                     languages = self.enry_on_latest_revision[file_path]
-                    if (language := languages[0].lower()) in self.local_ts_lang_objs:
+                    language = languages[0].lower()
+                    if language in self.local_ts_lang_objs:
                         patch_text = patch_files[file_path]
 
-                        self.local_ts_parser.set_language(self.local_ts_lang_objs[language])
-                        ts_query = self.local_ts_lang_objs[language].query("((identifier) @id)")
+                        self.local_ts_parser.set_language(
+                            self.local_ts_lang_objs[language]
+                        )
+                        ts_query = self.local_ts_lang_objs[language].query(
+                            "((identifier) @id)"
+                        )
                         patch_string = cleanup_diff(patch_text)
 
                         src_bytes = bytes(patch_string, "utf8")
-                        captures = ts_query.captures(self.local_ts_parser.parse(src_bytes).root_node)
+                        captures = ts_query.captures(
+                            self.local_ts_parser.parse(src_bytes).root_node
+                        )
                         if captures:
                             patch_set_dict[file_path] = patch_string
                             patch_languages[file_path] = language
                             patch_ids_dict[file_path] = list(map(
-                                lambda capture: src_bytes[capture[0].start_byte:capture[0].end_byte].decode('utf8'),
+                                lambda capture: src_bytes[
+                                    capture[0].start_byte:capture[0].end_byte
+                                ].decode('utf8'),
                                 captures
                             ))
 
-            return CommitParseResult(patch_languages, patch_set_dict, patch_ids_dict)
+            return CommitParseResult(
+                patch_languages, patch_set_dict, patch_ids_dict
+            )
 
         except UnidiffParseError as e:
             repo_name = path.basename(path.normpath(repo_path))
-            err_log_name = f"error{repo_name}:{self.chunk_number}:{self.curr_item_number}.log"
             parser_position = f"{self.chunk_number}:{self.curr_item_number}"
-
-            with open(f"{self.out_dir_path}/error{repo_name}:{parser_position}.log", 'w') as f:
+            err_log_name = f"error{repo_name}:{parser_position}.log"
+            with open(f"{self.out_dir_path}/{err_log_name}", 'w') as f:
                 f.write(diff_str)
-            sys.stderr.write(f"\n!!! ERROR !!!: Invalid (?) unidiff at item {parser_position}\n")
-            sys.stderr.write(f"\nText:\n\t{e}\nSee {err_log_name} for details...\n")
+            sys.stderr.write(
+                "\n!!! ERROR !!!: " +
+                f"Invalid (?) unidiff at item {parser_position}\n"
+            )
+            sys.stderr.write(
+                f"\nText:\n\t{e}\n" +
+                "See {err_log_name} for details...\n"
+            )
 
             return CommitParseResult({}, {}, {})  # not is_ok
-
