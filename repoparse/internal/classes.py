@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from os import path
 import sys
-from typing import Dict, List, Union
+from typing import Dict, List, Union, cast
 
 from dulwich.patch import gen_diff_header, is_binary, patch_filename, unified_diff
 from internal.utils import cleanup_diff, get_content, get_lines, unwrap_bytes_gen_to_str
@@ -48,7 +48,7 @@ class ParsedCommitInfo:
 class ParsedCommits:
     commit_data_by_sha: Dict[str, ParsedCommitInfo]
 
-    def __getitem__(self, item: str) -> ParsedCommitInfo:
+    def __getitem__(self, item: str) -> Union[ParsedCommitInfo, None]:
         return self.commit_data_by_sha.get(item)
 
     def __setitem__(self, key: str, value: ParsedCommitInfo):
@@ -109,8 +109,8 @@ class RepoParseContext:
         # ¯\_(ツ)_/¯
         changes = repo.object_store.tree_changes(commit.tree, parent.tree)
         for (old_path, new_path), (old_mode, new_mode), (old_sha, new_sha) in changes:
-            p_old_path = patch_filename(old_path, b'a')
-            p_new_path = patch_filename(new_path, b'b')
+            p_old_path = cast(bytes, patch_filename(old_path, b'a'))
+            p_new_path = cast(bytes, patch_filename(new_path, b'b'))
 
             diff_str += unwrap_bytes_gen_to_str(
                 gen_diff_header((old_path, new_path), (old_mode, new_mode), (old_sha, new_sha))
@@ -125,10 +125,10 @@ class RepoParseContext:
                 try:
                     diff_str += unwrap_bytes_gen_to_str(
                         unified_diff(
-                            get_lines(old_content),
-                            get_lines(new_content),
-                            p_old_path,
-                            p_new_path
+                            get_lines(old_content.as_raw_string().decode()),
+                            get_lines(new_content.as_raw_string().decode()),
+                            p_old_path.decode(),
+                            p_new_path.decode()
                         )
                     )
                 except UnicodeDecodeError:

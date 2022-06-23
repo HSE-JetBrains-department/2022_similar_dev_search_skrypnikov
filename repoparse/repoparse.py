@@ -3,8 +3,9 @@ import json
 import multiprocessing
 from os import getcwd, makedirs, path, system
 from shutil import rmtree
+import threading
 import time
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, MutableMapping, Tuple, Union, cast
 
 from dulwich.objects import Commit, ShaFile
 from dulwich.repo import Repo
@@ -54,7 +55,7 @@ def _parse_commit_chunk(chunk_tuple: Tuple[int, str, Dict[str, List[str]], List[
 
     for sha in chunk:
         ctx.curr_item_number += 1
-        if isinstance(repo[sha], Commit) and len(repo[sha].parents) == 1:
+        if isinstance(repo[sha], Commit) and len(cast(Commit, repo[sha]).parents) == 1:
             ctx.parse_commit_with_single_parent(repo, repo[sha])
 
     print(f"Chunk {chunk_n} exiting from {repo_path}...")
@@ -82,7 +83,7 @@ def _parse_repo_commits_not_chunked(repo_path: str, enry_dict: Dict[str, List[st
 
     for sha in repo.object_store:
         ctx.curr_item_number += 1
-        if isinstance(repo[sha], Commit) and len(repo[sha].parents) == 1:
+        if isinstance(repo[sha], Commit) and len(cast(Commit, repo[sha]).parents) == 1:
             ctx.parse_commit_with_single_parent(repo, repo[sha])
 
     return ctx.parsed_repo
@@ -119,16 +120,15 @@ def clone_and_detect_path(repo_path: str, force_reclone: bool, build_dir_path: s
     return cloned_path
 
 
-def get_github_repo_id(repo_path: str) -> Union[str, None]:
+def get_github_repo_id(repo_path: str) -> str:
     """A helper to fetch the github name from repo path"""
-    parsing_str: str
 
     if repo_path.startswith("git@"):
         return repo_path.replace("git@github.com:", "").replace(".git", "")
     elif repo_path.startswith("https://"):
         return repo_path.replace("https://github.com/", "").replace(".git", "")
 
-    return None
+    return ""
 
 
 def calculate_stars(repo_path: str, git_key_path: str, parse_depth: int, max_stargazers: int,
@@ -175,7 +175,7 @@ def calculate_stars(repo_path: str, git_key_path: str, parse_depth: int, max_sta
                 print(f"Github is behaving: {type(e)}")
                 reset_time = github.get_rate_limit().rate.reset
                 print("Retrying after a sleep...")
-                time.sleep(reset_time - time.time())
+                time.sleep(cast(int, reset_time) - time.time())
 
         print("Finished calculating stars")
 
@@ -186,7 +186,7 @@ def parse_repo(
         *, base_path: str, repo_path: str, do_reclone: bool, is_quiet: bool, is_chunked: bool, chunk_size: int,
         out_dir_name="out", build_dir_name="build", git_key_path="build/github_key",
         parse_depth=3, max_stargazers=100, max_stargazers_starred=10, next_stage_repos=2, pool_processes=5
-) -> Tuple[Union[None, List[str]], ParsedRepo]:
+) -> Tuple[Union[None, List[str]], Union[ParsedRepo, List[ParsedRepo]]]:
     """Main repo parse process entrance point"""
     absolute_out_path = path.join(base_path, out_dir_name)
     absolute_build_path = path.join(base_path, build_dir_name)
@@ -227,7 +227,7 @@ class RepoProcessWorker(multiprocessing.Process):
     """This is an abstraction for a process that works to parse a repo"""
 
     def __init__(self, *, base_path: str, repo_path: str, do_reclone: bool, is_quiet: bool, is_chunked: bool,
-                 chunk_size: int, visited_dict: Dict[str, int], visited_lock: multiprocessing.Lock,
+                 chunk_size: int, visited_dict: MutableMapping[str, int], visited_lock: threading.Lock,
                  out_dir_name="out", build_dir_name="build", git_key_path="build/github_key",
                  parse_depth=3, max_stargazers=1000, max_stargazers_starred=10, next_stage_repos=4, pool_processes=5):
         super().__init__()
@@ -358,8 +358,8 @@ if __name__ == '__main__':
             is_quiet=args.quiet,
             is_chunked=args.chunked,
             chunk_size=int(args.chunk_size[0] if args.chunk_size else 0),
-            visited_dict=manager.dict(),
-            visited_lock=manager.Lock(),
+            visited_dict=cast(MutableMapping[str, int], manager.dict()),
+            visited_lock=cast(threading.Lock, manager.Lock()),
             out_dir_name=args.out_path[0],
             build_dir_name=args.build_path[0],
             pool_processes=args.process_amount[0]

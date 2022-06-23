@@ -50,7 +50,7 @@ def path_base_norm(some_path: str) -> str: return path.normpath(path.basename(so
 def run_enry_by_file(base_path: str, repo_path: str) -> Dict[str, List[str]]:
     enry_dict_full_paths = {}
 
-    for root, dirs, files in walk(repo_path):
+    for root, _, files in walk(repo_path):
         for f in files:
             to_enrify = path.normpath(path.join(base_path, root, f))
             with open(to_enrify, 'rb') as file_bytes:

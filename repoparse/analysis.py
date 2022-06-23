@@ -7,7 +7,7 @@ import numpy as np
 from scipy.sparse import csr_matrix, dok_matrix
 from sklearn.neighbors import KDTree as skKdTree
 
-from repoparse import GLOBAL_LANGUAGES
+from .repoparse import GLOBAL_LANGUAGES
 
 T = TypeVar("T")
 
@@ -15,7 +15,7 @@ T = TypeVar("T")
 def read_data(base_path: str = "./out", data_file_prefix: str = "repoparse_") -> dict:
     """Reads raw data from files"""
     merged_dict = {}
-    for root, dirs, files in walk(base_path):
+    for root, _, files in walk(base_path):
 
         for f in files:
             if f.startswith(data_file_prefix):
@@ -32,7 +32,7 @@ def read_data(base_path: str = "./out", data_file_prefix: str = "repoparse_") ->
                                 continue
                             # this is a mishap, please don't hit me too hard
                             processed_commit_dict = {}
-                            for sha, contents in commit_dict.items():
+                            for _, contents in commit_dict.items():
                                 patch_set = contents["patch_languages"]
                                 patch_languages = contents["patch_set"]
                                 patch_ids = contents["patch_ids"]
@@ -82,7 +82,7 @@ def process_data(merged_dict: dict) -> Dict[str, Dict[str, Dict[str, int]]]:
     final_author_dict: Dict[str, Dict[str, Dict[str, int]]] = {}
     for _, repo_dict in merged_dict.items():
         print(f"\rMerged dict item {_}", end="")
-        for author_name, author_dict in repo_dict.items():
+        for author_name, _ in repo_dict.items():
             languages_subdict: Dict[str, int] = {}
             trigrams_subdict: Dict[str, int] = {}
 
@@ -149,7 +149,7 @@ def get_trigram_by_number(number: int) -> str:
     return "".join(reversed(trigram))
 
 
-def make_vectors(final_author_dict: Dict[str, Dict[str, Dict[str, int]]], author_index: Dict[str, int]) -> Tuple[np.array, csr_matrix]:
+def make_vectors(final_author_dict: Dict[str, Dict[str, Dict[str, int]]], author_index: Dict[str, int]) -> Tuple[np.ndarray, csr_matrix]:
     """Packs data into matrices"""
     language_matrix = np.zeros((len(author_index), len(LANGUAGES_INDEX)))
     trigram_dok_array = dok_matrix((len(author_index), TOTAL_TRIGRAM_COUNT), dtype=int)
