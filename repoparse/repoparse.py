@@ -5,7 +5,7 @@ from os import getcwd, makedirs, path, system
 from shutil import rmtree
 import threading
 import time
-from typing import Dict, List, MutableMapping, Tuple, Union, cast
+from typing import cast, Dict, List, MutableMapping, Tuple, Union
 
 from dulwich.objects import Commit, ShaFile
 from dulwich.repo import Repo
