@@ -213,13 +213,15 @@ def calculate_stars(
 
 
 def parse_repo(
-        *, base_path: str, repo_path: str, do_reclone: bool, is_quiet: bool, 
+        base_path: str, repo_path: str, do_reclone: bool, is_quiet: bool, 
         is_chunked: bool, chunk_size: int, out_dir_name="out", 
         build_dir_name="build", git_key_path="build/github_key",
         parse_depth=3, max_stargazers=100, max_stargazers_starred=10, 
         next_stage_repos=2, pool_processes=5
-) -> Tuple[Union[None, List[str]], Union[ParsedRepo, List[ParsedRepo]]]:
-    """Main repo parse process entrance point"""
+) -> Tuple[Union[None, List[str]], List[ParsedRepo]]:
+    """Main repo parse process entrance point.
+    Returns a tuple that contains a list of monikers for the next repo parse
+    and a list of data objects that contain commit data by author."""
     absolute_out_path = path.join(base_path, out_dir_name)
     absolute_build_path = path.join(base_path, build_dir_name)
     repos_for_next_parse: Union[None, List[str]] = None
@@ -264,7 +266,7 @@ class RepoProcessWorker(multiprocessing.Process):
     """This is an abstraction for a process that works to parse a repo"""
 
     def __init__(
-        self, *, base_path: str, repo_path: str, do_reclone: bool, 
+        self, base_path: str, repo_path: str, do_reclone: bool, 
         is_quiet: bool, is_chunked: bool, chunk_size: int, 
         visited_dict: MutableMapping[str, int], visited_lock: threading.Lock,
         out_dir_name="out", build_dir_name="build", 
@@ -293,7 +295,7 @@ class RepoProcessWorker(multiprocessing.Process):
         print(f"PARSE DEPTH: {self.parse_depth}")
 
         try:
-            next_repos, r = parse_repo(
+            next_repos, result = parse_repo(
                 base_path=self.base_path,
                 repo_path=self.repo_path,
                 do_reclone=self.do_reclone,
@@ -318,15 +320,20 @@ class RepoProcessWorker(multiprocessing.Process):
         out_path = f"{self.out_dir_name}/repoparse_{normed_repopath}.json"
         with open(out_path, "w") as json_out:
             json.dump(
-                r, json_out, 
+                result, json_out,
+                # to_dict() is my objects' method from the classes module.
                 default=lambda x: x.to_dict() if not isinstance(x, list) else x
             )
 
         # Some repos are truly humongous
         # and CPython can't effectively reclaim memory while processing them
         # So, here comes the del!
-        del r
+        del result
 
+        # We should avoid cycles in the tree of repos during the parse. 
+        # self.visited_dict is shared state.
+        # Since operations with the shared state are IPC, we should 
+        # care about proper lock release in case we get an exception.
         if next_repos:
             try:
                 self.visited_lock.acquire()
@@ -340,13 +347,12 @@ class RepoProcessWorker(multiprocessing.Process):
 
         print(f"Wrote {self.repo_path}")
         wait_list = []
-        try:
-            if not next_repos:
-                self.close()
-                return
+        if not next_repos:
+            self.close()
+            return
 
-            for repo_path in next_repos:
-                worker = RepoProcessWorker(
+        for repo_path in next_repos:
+            worker = RepoProcessWorker(
                     base_path=self.base_path,
                     repo_path=repo_path,
                     do_reclone=self.do_reclone,
@@ -362,21 +368,13 @@ class RepoProcessWorker(multiprocessing.Process):
                     max_stargazers=self.max_stargazers,
                     max_stargazers_starred=self.max_stargazers_starred,
                     next_stage_repos=self.next_stage_repos
-                )
-                worker.start()
-                wait_list.append(worker)
+            )
+            worker.start()
+            wait_list.append(worker)
 
-            for worker in wait_list:
-                worker.join()
-        finally:
-            for w in wait_list:
-                w.close()
-
-        print(f"Process {self.repo_path} runned parent!!!")
-
-    def close(self):
-        print(f"Closing {self.repo_path}!!!")
-        super().close()
+        for worker in wait_list:
+            worker.join()
+            worker.close()
 
 
 if __name__ == '__main__':
@@ -396,7 +394,7 @@ if __name__ == '__main__':
     args = arg_parser.parse_args()
 
     # Preload tree sitter so there would be no races
-    # (this function clones the git repos)
+    # (this function _may_ clone git repos)
     _ = load_tree_sitter(GLOBAL_LANGUAGES, build_dir_path=args.build_path[0])
 
     with multiprocessing.Manager() as manager:
